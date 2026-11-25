@@ -24,6 +24,14 @@ MAX_CHARS = 100
 
 def validate(text):
     """The gate accepts UTF-8 text of 1 to 100 characters."""
+    # Must be a real string and valid UTF-8: a surrogate or a
+    # non-encodable character would fail the gate's UTF-8 check.
+    if not isinstance(text, str):
+        raise ValueError("commit message must be a string")
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError("commit message is not valid UTF-8: %s" % exc)
     stripped = text.strip()
     if not stripped:
         raise ValueError("commit message must not be only whitespace")
@@ -36,7 +44,37 @@ def validate(text):
     # one-line commit subject.
     if "\n" in stripped or "\r" in stripped:
         raise ValueError("commit message must be a single line")
+    # No control characters: the gate reads the file as text,
+    # and a stray control byte would make the entry unreadable.
+    for ch in stripped:
+        if ord(ch) < 0x20 or ord(ch) == 0x7F:
+            raise ValueError(
+                "commit message contains control character U+%04X" % ord(ch)
+            )
     return stripped
+
+
+def verify_output(path, expected):
+    """Read the file back and fail loudly unless it is exactly
+    the validated message: UTF-8, one line, 1 to 100 chars."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    try:
+        actual = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("output is not valid UTF-8: %s" % exc)
+    if actual != expected:
+        raise ValueError(
+            "output mismatch: wrote %r, read back %r" % (expected, actual)
+        )
+    if not 1 <= len(actual) <= MAX_CHARS:
+        raise ValueError(
+            "output is %d characters, outside the 1-%d range"
+            % (len(actual), MAX_CHARS)
+        )
+    if "\n" in actual or "\r" in actual:
+        raise ValueError("output must be a single line")
+    return actual
 
 
 def output_path():
@@ -51,6 +89,7 @@ def main():
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
+    verify_output(path, text)
     print("wrote %d characters to %s" % (len(text), path))
     return 0
 
